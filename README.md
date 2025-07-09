@@ -21,9 +21,12 @@ $ docker compose up -d
 docker exec -it polar-flow-export python3 polar-flow-export.py <month> <year>
 ```
 
-If <month> <year> is not provided on command line, config.json will be used.
+If <month> <year> is not provided as args the current month/year will be used
 
-The tool will save sessions into the output directory, using the default filename
+The tool will save TCXs into the output directory, using the default filename
 provided by Polar.
+
+### bulk download
+After docker compos up -d you can simply run bulk.sh to bulk download over several years
 
 
