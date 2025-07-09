@@ -10,14 +10,15 @@ import time
 import sys
 import os
 import json
+from datetime import datetime
 
 FLOW_URL = "https://flow.polar.com"
 SELENIUM_HOST = os.environ["SELENIUM_HOST"]
 SELENIUM_PORT = os.environ["SELENIUM_PORT"]
 username = os.environ["POLAR_USER"]
 password = os.environ["POLAR_PASS"]
-month = os.environ["FLOW_MONTH"]
-year = os.environ["FLOW_YEAR"]
+month = datetime.now().month
+year = datetime.now().year
 output_dir = "/data"
 
 chrome_options = Options()
