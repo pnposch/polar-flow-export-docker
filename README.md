@@ -3,11 +3,16 @@ Polar Flow Exporter Docker
 
 A tool for exporting training sessions from [Polar Flow](https://flow.polar.com).
 
+## Updates
+Moved Selenium to the docker
+Adjusted Login for new Polar Auth (July 2025)
+Bug-hunting
+
 ## Installation
 
 ```bash
 $ git clone https://github.com/pnposch/polar-flow-export.git
-$ docker-compose up -d
+$ docker compose up -d
 ```
 
 ## Usage

@@ -3,3 +3,5 @@
 /data
 config.json
 *-json
+.venv
+.env

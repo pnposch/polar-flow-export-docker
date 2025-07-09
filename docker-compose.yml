@@ -1,12 +1,28 @@
-version: '3.7'
-
 services:
-  app:
-    build:
-     context: .
-     dockerfile: Dockerfile
+  selenium:
+    image: selenium/standalone-chrome:latest
+    ports:
+      - "4444:4444"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4444/wd/hub/status"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     volumes:
-      - ../data/:/data
-      - ./config.json:/polar-flow-export/config.json
- #     - ./polar-export.py:/polar-flow-export/polar-export.py # Testing with local version
-
+      - /dev/shm:/dev/shm
+  app:
+      container_name: export
+      build:
+        context: .
+      environment:
+        - SELENIUM_HOST=selenium
+        - SELENIUM_PORT=4444
+        - POLAR_USER=${POLAR_USER}
+        - POLAR_PASS=${POLAR_PASS}
+      volumes:
+        - ./data/:/data
+        - ./polar-export.py:/polar-export.py
+      depends_on:
+        selenium:
+          condition: service_healthy
