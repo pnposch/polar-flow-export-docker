@@ -20,9 +20,10 @@ def validate_env():
         sys.exit(f"Error: missing required environment variables: {', '.join(missing)}")
 
 
-def build_driver():
+def build_driver(headless=True):
     chrome_options = Options()
-    chrome_options.add_argument("--headless")
+    if headless:
+        chrome_options.add_argument("--headless")
     chrome_options.add_argument("--disable-extensions")
     chrome_options.add_argument("--disable-gpu")
     chrome_options.add_argument("--disable-dev-shm-usage")
@@ -81,44 +82,38 @@ def save_ids(output_dir, ids):
 def get_export_url(driver, exercise_id):
     """Navigate to the exercise analysis page and return the TCX download URL."""
     driver.get(f"{FLOW_URL}/training/analysis2/{exercise_id}")
-    wait = WebDriverWait(driver, 15)
+    wait = WebDriverWait(driver, 5)  # short probe timeout per attempt
 
-    # Try direct anchor with a TCX href (covers most Polar Flow versions)
-    for css in (
-        "a[href*='/tcx/']",
-        "a[href*='export'][href*='tcx']",
-        "a[href*='.tcx']",
-    ):
-        try:
-            el = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, css)))
-            href = el.get_attribute("href")
-            if href:
-                return href
-        except Exception:
-            pass
+    # Combined selector — matches any direct TCX anchor in one wait
+    DIRECT = "a[href*='/tcx/'], a[href*='export'][href*='tcx'], a[href*='.tcx']"
+    try:
+        el = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, DIRECT)))
+        href = el.get_attribute("href")
+        if href:
+            return href
+    except Exception:
+        pass
 
-    # Try: open an export/download dropdown, then pick the TCX entry
-    for btn_css in (
-        "button[class*='export']",
-        "a[class*='export']",
-        "[data-export]",
-        "button[class*='download']",
-    ):
-        try:
-            btn = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, btn_css)))
-            btn.click()
-            el = wait.until(EC.element_to_be_clickable(
-                (By.XPATH, "//*[contains(@href,'tcx') or (self::a and contains(text(),'TCX'))]")
-            ))
-            href = el.get_attribute("href")
-            if href:
-                return href
-        except Exception:
-            pass
+    # Try opening an export/download dropdown, then pick the TCX entry
+    DROPDOWN_BTN = (
+        "button[class*='export'], a[class*='export'], "
+        "[data-export], button[class*='download']"
+    )
+    try:
+        btn = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, DROPDOWN_BTN)))
+        btn.click()
+        el = WebDriverWait(driver, 5).until(EC.element_to_be_clickable(
+            (By.XPATH, "//*[contains(@href,'tcx') or (self::a and contains(text(),'TCX'))]")
+        ))
+        href = el.get_attribute("href")
+        if href:
+            return href
+    except Exception:
+        pass
 
     raise ValueError(
         f"Could not find TCX export link on analysis page for exercise {exercise_id}. "
-        "Set --headless=false in build_driver() to inspect the page."
+        "Set chrome_options.add_argument('--headless=false') in build_driver() to inspect the page."
     )
 
 
@@ -175,6 +170,10 @@ def parse_args():
         "--output-dir", default="/data",
         help="Directory to write TCX files to (default: /data)",
     )
+    parser.add_argument(
+        "--no-headless", action="store_true",
+        help="Disable headless mode (shows the browser — useful for debugging)",
+    )
     # Legacy positional support: polar-export.py <month> <year>
     parser.add_argument("month_pos", nargs="?", help=argparse.SUPPRESS)
     parser.add_argument("year_pos", nargs="?", help=argparse.SUPPRESS)
@@ -203,7 +202,7 @@ def main():
     password = os.environ["POLAR_PASS"]
     print(f"Exporting {start.strftime('%Y-%m')} → {end.strftime('%Y-%m')} as {username}")
 
-    driver = build_driver()
+    driver = build_driver(headless=not args.no_headless)
     print("Chrome initialized")
     all_failed = []
     try:
