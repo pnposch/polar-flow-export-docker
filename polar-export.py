@@ -79,75 +79,7 @@ def save_ids(output_dir, ids):
         f.write("\n".join(sorted(ids)))
 
 
-def get_export_url(driver, exercise_id):
-    """Navigate to the exercise analysis page and return the TCX download URL."""
-    driver.get(f"{FLOW_URL}/training/analysis2/{exercise_id}")
-
-    # Wait for the SPA to finish rendering the page body
-    WebDriverWait(driver, 15).until(
-        EC.presence_of_element_located((By.CSS_SELECTOR, "main, #app, .training-day-view, .sport-result"))
-    )
-    wait = WebDriverWait(driver, 5)
-
-    # Combined selector — matches any direct TCX anchor in one wait
-    DIRECT = "a[href*='/tcx/'], a[href*='export'][href*='tcx'], a[href*='.tcx']"
-    try:
-        el = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, DIRECT)))
-        href = el.get_attribute("href")
-        if href:
-            return href
-    except Exception:
-        pass
-
-    # Try opening an export/download dropdown, then pick the TCX entry
-    DROPDOWN_BTN = (
-        "button[class*='export'], a[class*='export'], "
-        "[data-export], button[class*='download'], "
-        "button[aria-label*='export' i], button[aria-label*='download' i], "
-        "button[title*='export' i], button[title*='download' i]"
-    )
-    try:
-        btn = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, DROPDOWN_BTN)))
-        btn.click()
-        el = WebDriverWait(driver, 5).until(EC.element_to_be_clickable(
-            (By.XPATH, "//*[contains(@href,'tcx') or (self::a and contains(text(),'TCX')) or contains(text(),'TCX')]")
-        ))
-        href = el.get_attribute("href")
-        if href:
-            return href
-    except Exception:
-        pass
-
-    # Diagnostics: print everything on the page that looks export/download related
-    print(f"\n--- Exercise {exercise_id}: could not find TCX link. Page diagnostics: ---", file=sys.stderr)
-    try:
-        all_links = driver.find_elements(By.TAG_NAME, "a")
-        relevant = [(el.text.strip(), el.get_attribute("href")) for el in all_links
-                    if el.get_attribute("href") and
-                    any(k in (el.get_attribute("href") or "").lower() or k in el.text.lower()
-                        for k in ("export", "tcx", "download", "fit", "gpx"))]
-        if relevant:
-            print("  Relevant anchors:", file=sys.stderr)
-            for text, href in relevant:
-                print(f"    text={text!r:30s}  href={href}", file=sys.stderr)
-        else:
-            print("  No export/tcx/download anchors found.", file=sys.stderr)
-
-        all_btns = driver.find_elements(By.TAG_NAME, "button")
-        btn_info = [(b.text.strip(), b.get_attribute("class"), b.get_attribute("aria-label"))
-                    for b in all_btns if b.text.strip() or b.get_attribute("aria-label")]
-        if btn_info:
-            print("  Buttons on page:", file=sys.stderr)
-            for text, cls, aria in btn_info:
-                print(f"    text={text!r:30s}  class={cls!r:40s}  aria-label={aria!r}", file=sys.stderr)
-    except Exception as diag_err:
-        print(f"  (diagnostic collection failed: {diag_err})", file=sys.stderr)
-    print("--- end diagnostics ---\n", file=sys.stderr)
-
-    raise ValueError(f"Could not find TCX export link for exercise {exercise_id} (see diagnostics above)")
-
-
-def download_exercises(driver, session, exercise_ids, existing_ids, output_dir):
+def download_exercises(session, exercise_ids, existing_ids, output_dir):
     new_ids = [eid for eid in exercise_ids if eid not in existing_ids]
     skipped = len(exercise_ids) - len(new_ids)
     if skipped:
@@ -155,7 +87,7 @@ def download_exercises(driver, session, exercise_ids, existing_ids, output_dir):
     downloaded, failed = [], []
     for ex_id in new_ids:
         try:
-            url = get_export_url(driver, ex_id)
+            url = f"{FLOW_URL}/api/export/training/tcx/{ex_id}?compress=false"
             r = session.get(url)
             r.raise_for_status()
             match = re.search(r'filename="([\w._-]+)"', r.headers.get("Content-Disposition", ""))
@@ -247,7 +179,7 @@ def main():
             session = requests.Session()
             for cookie in driver.get_cookies():
                 session.cookies.set(cookie["name"], cookie["value"])
-            downloaded, failed = download_exercises(driver, session, exercise_ids, existing_ids, output_dir)
+            downloaded, failed = download_exercises(session, exercise_ids, existing_ids, output_dir)
             existing_ids.update(downloaded)
             save_ids(output_dir, existing_ids)
             all_failed.extend(failed)
