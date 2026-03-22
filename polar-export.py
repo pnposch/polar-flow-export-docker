@@ -68,6 +68,8 @@ def load_ids(output_dir):
             return set(f.read().splitlines())
     except FileNotFoundError:
         return set()
+    except OSError as e:
+        sys.exit(f"Error: cannot read {ids_file}: {e}\nEnsure the output directory exists and is writable.")
 
 
 def save_ids(output_dir, ids):
