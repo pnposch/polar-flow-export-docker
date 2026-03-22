@@ -89,6 +89,21 @@ def save_ids(output_dir, ids):
         f.write("\n".join(sorted(ids)))
 
 
+def load_completed_months(output_dir):
+    path = os.path.join(output_dir, "completed_months.txt")
+    try:
+        with open(path) as f:
+            return set(line.strip() for line in f if line.strip())
+    except FileNotFoundError:
+        return set()
+
+
+def save_completed_month(output_dir, year_month, completed):
+    completed.add(year_month)
+    with open(os.path.join(output_dir, "completed_months.txt"), "w") as f:
+        f.write("\n".join(sorted(completed)))
+
+
 def download_exercises(session, exercise_ids, existing_ids, output_dir):
     new_ids = [eid for eid in exercise_ids if eid not in existing_ids]
     skipped = len(exercise_ids) - len(new_ids)
@@ -177,13 +192,24 @@ def main():
     driver = build_driver(headless=not args.no_headless)
     print("Chrome initialized")
     all_failed = []
+    today_ym = date.today().strftime("%Y-%m")
     try:
         existing_ids = load_ids(output_dir)
+        completed = load_completed_months(output_dir)
         login(driver, username, password)
 
         for year, month in month_range(start, end):
+            ym = f"{year}-{month:02d}"
+            # Skip months already fully downloaded, except the current month
+            # (which may have new exercises added since last run)
+            if ym in completed and ym != today_ym:
+                print(f"Skipping {ym} (already completed)")
+                continue
+
             exercise_ids = get_exercise_ids(driver, year, month)
             if not exercise_ids:
+                # Empty month — mark as complete so we don't revisit
+                save_completed_month(output_dir, ym, completed)
                 continue
             # Refresh cookies from the driver before each batch of downloads
             session = requests.Session()
@@ -199,6 +225,9 @@ def main():
             existing_ids.update(downloaded)
             save_ids(output_dir, existing_ids)
             all_failed.extend(failed)
+            # Only mark the month complete when every exercise succeeded
+            if not failed and ym != today_ym:
+                save_completed_month(output_dir, ym, completed)
     finally:
         driver.quit()
 

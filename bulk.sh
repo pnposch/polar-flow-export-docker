@@ -1,7 +1,8 @@
 #!/bin/bash
 set -euo pipefail
 
-start_month="2025-01"
+# First month to consider. Override with: POLAR_START=2015-06 ./bulk.sh
+start_month="${POLAR_START:-2014-01}"
 end_month=$(date +%Y-%m)
 
 if ! docker inspect -f '{{.State.Running}}' export 2>/dev/null | grep -q true; then
@@ -9,5 +10,5 @@ if ! docker inspect -f '{{.State.Running}}' export 2>/dev/null | grep -q true; t
   exit 1
 fi
 
-echo "==> Bulk export: $start_month → $end_month"
+echo "==> Bulk export: $start_month → $end_month (already-completed months will be skipped)"
 docker exec export python3 polar-export.py --start "$start_month" --end "$end_month"
