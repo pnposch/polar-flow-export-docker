@@ -3,7 +3,6 @@ import os
 import re
 import requests
 import sys
-import time
 from datetime import date
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
@@ -41,6 +40,8 @@ def login(driver, username, password):
     driver.find_element(By.ID, "username").send_keys(username)
     driver.find_element(By.ID, "password").send_keys(password)
     driver.find_element(By.CSS_SELECTOR, "button[type='submit']").click()
+    # Wait until SSO redirect completes (URL leaves the flowSso domain)
+    WebDriverWait(driver, 30).until(lambda d: "flowSso" not in d.current_url)
     print("Logged in")
 
 
@@ -77,7 +78,51 @@ def save_ids(output_dir, ids):
         f.write("\n".join(sorted(ids)))
 
 
-def download_exercises(session, exercise_ids, existing_ids, output_dir):
+def get_export_url(driver, exercise_id):
+    """Navigate to the exercise analysis page and return the TCX download URL."""
+    driver.get(f"{FLOW_URL}/training/analysis2/{exercise_id}")
+    wait = WebDriverWait(driver, 15)
+
+    # Try direct anchor with a TCX href (covers most Polar Flow versions)
+    for css in (
+        "a[href*='/tcx/']",
+        "a[href*='export'][href*='tcx']",
+        "a[href*='.tcx']",
+    ):
+        try:
+            el = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, css)))
+            href = el.get_attribute("href")
+            if href:
+                return href
+        except Exception:
+            pass
+
+    # Try: open an export/download dropdown, then pick the TCX entry
+    for btn_css in (
+        "button[class*='export']",
+        "a[class*='export']",
+        "[data-export]",
+        "button[class*='download']",
+    ):
+        try:
+            btn = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, btn_css)))
+            btn.click()
+            el = wait.until(EC.element_to_be_clickable(
+                (By.XPATH, "//*[contains(@href,'tcx') or (self::a and contains(text(),'TCX'))]")
+            ))
+            href = el.get_attribute("href")
+            if href:
+                return href
+        except Exception:
+            pass
+
+    raise ValueError(
+        f"Could not find TCX export link on analysis page for exercise {exercise_id}. "
+        "Set --headless=false in build_driver() to inspect the page."
+    )
+
+
+def download_exercises(driver, session, exercise_ids, existing_ids, output_dir):
     new_ids = [eid for eid in exercise_ids if eid not in existing_ids]
     skipped = len(exercise_ids) - len(new_ids)
     if skipped:
@@ -85,7 +130,8 @@ def download_exercises(session, exercise_ids, existing_ids, output_dir):
     downloaded, failed = [], []
     for ex_id in new_ids:
         try:
-            r = session.get(f"{FLOW_URL}/api/export/training/tcx/{ex_id}")
+            url = get_export_url(driver, ex_id)
+            r = session.get(url)
             r.raise_for_status()
             match = re.search(r'filename="([\w._-]+)"', r.headers.get("Content-Disposition", ""))
             if not match:
@@ -163,7 +209,6 @@ def main():
     try:
         existing_ids = load_ids(output_dir)
         login(driver, username, password)
-        time.sleep(5)  # wait for SSO redirect to complete
 
         for year, month in month_range(start, end):
             exercise_ids = get_exercise_ids(driver, year, month)
@@ -173,7 +218,7 @@ def main():
             session = requests.Session()
             for cookie in driver.get_cookies():
                 session.cookies.set(cookie["name"], cookie["value"])
-            downloaded, failed = download_exercises(session, exercise_ids, existing_ids, output_dir)
+            downloaded, failed = download_exercises(driver, session, exercise_ids, existing_ids, output_dir)
             existing_ids.update(downloaded)
             save_ids(output_dir, existing_ids)
             all_failed.extend(failed)
