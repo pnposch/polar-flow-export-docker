@@ -1,32 +1,48 @@
 Polar Flow Exporter Docker
 =========================
 
-A tool for exporting training sessions from [Polar Flow](https://flow.polar.com).
+A tool for exporting training sessions from [Polar Flow](https://flow.polar.com) as TCX files.
 
 ## Updates
-Moved Selenium to the docker
-Adjusted Login for new Polar Auth (July 2025)
-Bug-hunting
+- Moved Selenium to Docker
+- Adjusted login for new Polar Auth (July 2025)
+- Refactored to single Selenium session across months (faster bulk exports)
+- Added `--start` / `--end` / `--output-dir` CLI flags
 
 ## Installation
 
 ```bash
-$ git clone https://github.com/pnposch/polar-flow-export.git
-$ docker compose up -d
+git clone https://github.com/pnposch/polar-flow-export.git
+cp .env.example .env   # fill in your credentials
+docker compose up -d
 ```
 
 ## Usage
 
+Export the current month:
 ```bash
-docker exec -it polar-flow-export python3 polar-flow-export.py <month> <year>
+docker exec -it export python3 polar-export.py
 ```
 
-If <month> <year> is not provided as args the current month/year will be used
+Export a specific month:
+```bash
+docker exec -it export python3 polar-export.py <month> <year>
+```
 
-The tool will save TCXs into the output directory, using the default filename
-provided by Polar.
+Export a date range:
+```bash
+docker exec -it export python3 polar-export.py --start 2025-01 --end 2026-03
+```
 
-### bulk download
-After docker compos up -d you can simply run bulk.sh to bulk download over several years
+TCX files are saved to the host directory mapped to `/data` inside the container (configured in `docker-compose.yml`).
 
+### Bulk download
+
+Edit `start_month` in `bulk.sh`, then:
+
+```bash
+./bulk.sh
+```
+
+`bulk.sh` runs a single export session from `start_month` to the current month — one login, no redundant reconnects.
 

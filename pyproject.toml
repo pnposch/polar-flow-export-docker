@@ -1,0 +1,9 @@
+[project]
+name = "polar-flow-export"
+version = "0.1.0"
+description = "Add your description here"
+requires-python = ">=3.13"
+dependencies = [
+    "requests>=2.32.4",
+    "selenium>=4.34.2",
+]

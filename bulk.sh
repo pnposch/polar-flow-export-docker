@@ -1,12 +1,13 @@
 #!/bin/bash
+set -euo pipefail
 
-# Set the range of years
-start_year=2020
-end_year=2025
+start_month="2025-01"
+end_month=$(date +%Y-%m)
 
-# Loop through each year and month
-for (( year=$start_year; year<=$end_year; year++ )); do
-  for (( month=1; month<=12; month++ )); do
-    docker exec export python3 polar-export.py $month $year
-  done
-done
+if ! docker inspect -f '{{.State.Running}}' export 2>/dev/null | grep -q true; then
+  echo "Error: container 'export' is not running. Run 'docker compose up -d' first." >&2
+  exit 1
+fi
+
+echo "==> Bulk export: $start_month → $end_month"
+docker exec export python3 polar-export.py --start "$start_month" --end "$end_month"

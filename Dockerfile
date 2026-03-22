@@ -1,5 +1,6 @@
-FROM python:3.10-alpine
-COPY polar-export.py requirements.txt ./
+FROM python:3.13-alpine
+WORKDIR /app
+COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
-WORKDIR ./
+COPY polar-export.py ./
 CMD sleep infinity

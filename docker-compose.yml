@@ -21,8 +21,8 @@ services:
         - POLAR_USER=${POLAR_USER}
         - POLAR_PASS=${POLAR_PASS}
       volumes:
-        - ../polar_data/:/data #change to your destination, i suggest going up in the tree
-        - ./polar-export.py:/polar-export.py #not needed but useful for local testing
+        - ../polar_data/:/data
+        - ./polar-export.py:/app/polar-export.py
       depends_on:
         selenium:
           condition: service_healthy

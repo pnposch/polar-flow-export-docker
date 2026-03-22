@@ -1,120 +1,190 @@
+import argparse
+import os
+import re
+import requests
+import sys
+import time
+from datetime import date
 from selenium import webdriver
-from selenium.webdriver.common.desired_capabilities import DesiredCapabilities
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-import requests
-import re
-import time
-import sys
-import os
-import json
-from datetime import datetime
+from selenium.webdriver.support.ui import WebDriverWait
 
 FLOW_URL = "https://flow.polar.com"
-SELENIUM_HOST = os.environ["SELENIUM_HOST"]
-SELENIUM_PORT = os.environ["SELENIUM_PORT"]
-username = os.environ["POLAR_USER"]
-password = os.environ["POLAR_PASS"]
-month = datetime.now().month
-year = datetime.now().year
-output_dir = "/data"
 
-chrome_options = Options()
-chrome_options.add_argument("--headless") # disable to show whats happening
-chrome_options.add_argument("--disable-extensions")
-chrome_options.add_argument("--disable-gpu")
-chrome_options.add_argument("--disable-dev-shm-usage")
-#chrome_options.add_argument("--remote-debugging-port=9222")  # this
-chrome_options.add_argument("--no-sandbox") # needed in docker
 
-print("Initialized using username %s" % (username))
+def validate_env():
+    required = ["POLAR_USER", "POLAR_PASS", "SELENIUM_HOST", "SELENIUM_PORT"]
+    missing = [v for v in required if not os.environ.get(v)]
+    if missing:
+        sys.exit(f"Error: missing required environment variables: {', '.join(missing)}")
+
+
+def build_driver():
+    chrome_options = Options()
+    chrome_options.add_argument("--headless")
+    chrome_options.add_argument("--disable-extensions")
+    chrome_options.add_argument("--disable-gpu")
+    chrome_options.add_argument("--disable-dev-shm-usage")
+    chrome_options.add_argument("--no-sandbox")
+    selenium_host = os.environ["SELENIUM_HOST"]
+    selenium_port = os.environ["SELENIUM_PORT"]
+    return webdriver.Remote(
+        command_executor=f"http://{selenium_host}:{selenium_port}/wd/hub",
+        options=chrome_options,
+    )
+
 
 def login(driver, username, password):
-    driver.get("%s/flowSso/login" % FLOW_URL)
-    driver.find_element(By.ID,"username").send_keys(username)
-    driver.find_element(By.ID,"password").send_keys(password)
+    driver.get(f"{FLOW_URL}/flowSso/login")
+    driver.find_element(By.ID, "username").send_keys(username)
+    driver.find_element(By.ID, "password").send_keys(password)
     driver.find_element(By.CSS_SELECTOR, "button[type='submit']").click()
     print("Logged in")
+
 
 def get_exercise_ids(driver, year, month):
     try:
         driver.get(f"{FLOW_URL}/diary/{year}/month/{month}")
-        
-        # Use WebDriverWait instead of time.sleep
-
         wait = WebDriverWait(driver, 10)
         wait.until(EC.presence_of_all_elements_located(
             (By.XPATH, "//div[@class='event event-month exercise']/a")
         ))
-        
-        # Get elements and extract IDs
         elements = driver.find_elements(By.XPATH, "//div[@class='event event-month exercise']/a")
-        prefix = "https://flow.polar.com/training/analysis2/"
+        prefix = f"{FLOW_URL}/training/analysis2/"
         ids = [e.get_attribute("href")[len(prefix):] for e in elements]
-        
-        print(f"Exercise List downloaded with {len(ids)} id's")
-        
-        # Write new IDs to file
-        write_new_ids(ids)
+        print(f"Found {len(ids)} exercise(s) for {year}/{month:02d}")
         return ids
-        
     except Exception as e:
-        print(f"Error fetching exercise IDs: {e}")
+        print(f"No exercises found for {year}/{month:02d}: {e}")
         return []
 
 
-def _load_cookies(session, cookies):
-    for cookie in cookies:
-        session.cookies.set(cookie['name'], cookie['value'])
-
-def initialize_local_tcxs():
+def load_ids(output_dir):
+    ids_file = os.path.join(output_dir, "ids.txt")
     try:
-        with open(os.path.join(output_dir, "ids.txt"), 'r') as infile:
-            existing_ids = infile.read().splitlines()
-    except IOError as e:
-        print(f"Error reading file: {e}")
-        existing_ids = []
-    return existing_ids
-
-def write_new_ids(newids):
-    oldids = initialize_local_tcxs()
-    ids = list ( set(newids+oldids) )
-    with open(os.path.join(output_dir, "ids.txt"), 'w') as outfile:
-        outfile.write("\n".join(ids))
-
-if __name__ == "__main__":
-    try:
-        (month, year) = sys.argv[1:]
-    except ValueError:
-        sys.stderr.write(("You can provide: %s <month> <year> here or in ENV \n") % sys.argv[0])
-    print("Fetching %s / %s" % (month, year))
+        with open(ids_file) as f:
+            return set(f.read().splitlines())
+    except FileNotFoundError:
+        return set()
 
 
-    #driver = webdriver.Chrome(options=chrome_options)
-    driver = webdriver.Remote(
-        command_executor='http://%s:%s/wd/hub' % (SELENIUM_HOST, SELENIUM_PORT),
-        #desired_capabilities=DesiredCapabilities.CHROME,
-        options=chrome_options
+def save_ids(output_dir, ids):
+    with open(os.path.join(output_dir, "ids.txt"), "w") as f:
+        f.write("\n".join(sorted(ids)))
+
+
+def download_exercises(session, exercise_ids, existing_ids, output_dir):
+    new_ids = [eid for eid in exercise_ids if eid not in existing_ids]
+    skipped = len(exercise_ids) - len(new_ids)
+    if skipped:
+        print(f"Skipping {skipped} already-downloaded exercise(s)")
+    downloaded, failed = [], []
+    for ex_id in new_ids:
+        try:
+            r = session.get(f"{FLOW_URL}/api/export/training/tcx/{ex_id}")
+            r.raise_for_status()
+            match = re.search(r'filename="([\w._-]+)"', r.headers.get("Content-Disposition", ""))
+            if not match:
+                raise ValueError(f"missing Content-Disposition filename for exercise {ex_id}")
+            filename = match.group(1)
+            with open(os.path.join(output_dir, filename), "w") as f:
+                f.write(r.text)
+            print(f"Downloaded {filename}")
+            downloaded.append(ex_id)
+        except Exception as e:
+            print(f"Error downloading exercise {ex_id}: {e}", file=sys.stderr)
+            failed.append(ex_id)
+    return downloaded, failed
+
+
+def month_range(start: date, end: date):
+    y, m = start.year, start.month
+    while (y, m) <= (end.year, end.month):
+        yield y, m
+        m += 1
+        if m > 12:
+            m, y = 1, y + 1
+
+
+def parse_args():
+    today = date.today()
+    parser = argparse.ArgumentParser(
+        description="Export Polar Flow training sessions as TCX files"
     )
+    parser.add_argument(
+        "--start", metavar="YYYY-MM",
+        default=f"{today.year}-{today.month:02d}",
+        help="First month to export (default: current month)",
+    )
+    parser.add_argument(
+        "--end", metavar="YYYY-MM",
+        default=f"{today.year}-{today.month:02d}",
+        help="Last month to export (default: current month)",
+    )
+    parser.add_argument(
+        "--output-dir", default="/data",
+        help="Directory to write TCX files to (default: /data)",
+    )
+    # Legacy positional support: polar-export.py <month> <year>
+    parser.add_argument("month_pos", nargs="?", help=argparse.SUPPRESS)
+    parser.add_argument("year_pos", nargs="?", help=argparse.SUPPRESS)
+    return parser.parse_args()
+
+
+def main():
+    validate_env()
+    args = parse_args()
+    output_dir = args.output_dir
+    os.makedirs(output_dir, exist_ok=True)
+
+    if args.month_pos and args.year_pos:
+        m, y = int(args.month_pos), int(args.year_pos)
+        start = end = date(y, m, 1)
+    else:
+        try:
+            start = date.fromisoformat(args.start + "-01")
+            end = date.fromisoformat(args.end + "-01")
+        except ValueError as e:
+            sys.exit(f"Error: invalid date format — {e}")
+        if start > end:
+            sys.exit("Error: --start must not be after --end")
+
+    username = os.environ["POLAR_USER"]
+    password = os.environ["POLAR_PASS"]
+    print(f"Exporting {start.strftime('%Y-%m')} → {end.strftime('%Y-%m')} as {username}")
+
+    driver = build_driver()
     print("Chrome initialized")
+    all_failed = []
     try:
-        existing_ids = initialize_local_tcxs() #do this first
+        existing_ids = load_ids(output_dir)
         login(driver, username, password)
-        time.sleep(5)
-        exercise_ids = get_exercise_ids(driver, year, month) #list gets updated by this process
-        print(f"We got  {len(exercise_ids)} total online and {len(existing_ids)} locally")
-        s = requests.Session()
-        _load_cookies(s, driver.get_cookies())
+        time.sleep(5)  # wait for SSO redirect to complete
 
-        for ex_id in exercise_ids:
-            r = s.get("%s/api/export/training/tcx/%s" % (FLOW_URL, ex_id))
-            filename = re.search(r"filename=\"([\w._-]+)\"", r.headers['Content-Disposition']).group(1)
-            with open(os.path.join(output_dir, filename), 'w') as outfile:
-                outfile.write(r.text)
-            print("Wrote file %s" % filename)
-
+        for year, month in month_range(start, end):
+            exercise_ids = get_exercise_ids(driver, year, month)
+            if not exercise_ids:
+                continue
+            # Refresh cookies from the driver before each batch of downloads
+            session = requests.Session()
+            for cookie in driver.get_cookies():
+                session.cookies.set(cookie["name"], cookie["value"])
+            downloaded, failed = download_exercises(session, exercise_ids, existing_ids, output_dir)
+            existing_ids.update(downloaded)
+            save_ids(output_dir, existing_ids)
+            all_failed.extend(failed)
     finally:
         driver.quit()
-        print("Finished with %s / %s" % (month, year) )
+
+    if all_failed:
+        print(f"\n{len(all_failed)} exercise(s) failed:", file=sys.stderr)
+        for fid in all_failed:
+            print(f"  {fid}", file=sys.stderr)
+        sys.exit(1)
+    print("Done.")
+
+
+if __name__ == "__main__":
+    main()
