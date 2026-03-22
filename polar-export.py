@@ -54,8 +54,18 @@ def get_exercise_ids(driver, year, month):
             (By.XPATH, "//div[@class='event event-month exercise']/a")
         ))
         elements = driver.find_elements(By.XPATH, "//div[@class='event event-month exercise']/a")
-        prefix = f"{FLOW_URL}/training/analysis2/"
-        ids = [e.get_attribute("href")[len(prefix):] for e in elements]
+        hrefs = [e.get_attribute("href") or "" for e in elements]
+        # Log first few hrefs to help diagnose ID extraction issues
+        if hrefs:
+            print(f"  Sample hrefs: {hrefs[:3]}", file=sys.stderr)
+        ids = []
+        for href in hrefs:
+            # Extract the last numeric segment from the URL path (robust vs prefix changes)
+            m = re.search(r'/(\d+)(?:[/?#]|$)', href)
+            if m:
+                ids.append(m.group(1))
+            else:
+                print(f"  Warning: could not extract ID from href: {href!r}", file=sys.stderr)
         print(f"Found {len(ids)} exercise(s) for {year}/{month:02d}")
         return ids
     except Exception as e:
@@ -179,6 +189,12 @@ def main():
             session = requests.Session()
             for cookie in driver.get_cookies():
                 session.cookies.set(cookie["name"], cookie["value"])
+            # Mirror the browser's User-Agent and Referer so Polar doesn't reject the request
+            user_agent = driver.execute_script("return navigator.userAgent")
+            session.headers.update({
+                "User-Agent": user_agent,
+                "Referer": FLOW_URL + "/",
+            })
             downloaded, failed = download_exercises(session, exercise_ids, existing_ids, output_dir)
             existing_ids.update(downloaded)
             save_ids(output_dir, existing_ids)
