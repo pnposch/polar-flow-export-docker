@@ -15,6 +15,7 @@ services:
       container_name: export
       build:
         context: .
+      user: "${UID}:${GID}"
       environment:
         - SELENIUM_HOST=selenium
         - SELENIUM_PORT=4444

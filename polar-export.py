@@ -185,6 +185,14 @@ def main():
         if start > end:
             sys.exit("Error: --start must not be after --end")
 
+    today = date.today()
+    current_month = date(today.year, today.month, 1)
+    if end > current_month:
+        print(f"Note: --end capped to current month ({current_month.strftime('%Y-%m')})")
+        end = current_month
+    if start > end:
+        sys.exit("Error: --start is after the capped end date (current month)")
+
     username = os.environ["POLAR_USER"]
     password = os.environ["POLAR_PASS"]
     print(f"Exporting {start.strftime('%Y-%m')} → {end.strftime('%Y-%m')} as {username}")
