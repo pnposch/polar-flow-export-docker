@@ -46,3 +46,30 @@ Edit `start_month` in `bulk.sh`, then:
 
 `bulk.sh` runs a single export session from `start_month` to the current month — one login, no redundant reconnects.
 
+### Automated monthly export (on first boot of each month)
+
+Because the computer may not be on at a fixed time, `monthly-export.sh` uses a marker file (`~/.polar-monthly-export-last-run`) to run the previous month's export exactly once — on the first boot of each new month. Subsequent boots that month are silent no-ops.
+
+The script also starts the Docker containers if they are not running, waits for the Selenium health check, and logs everything to `cron.log` in the repo directory.
+
+**Setup — run once:**
+
+```bash
+# Make executable (already done if you cloned fresh)
+chmod +x /path/to/polar-flow-export/monthly-export.sh
+
+# Add to crontab (runs 60 s after every boot to let networking settle)
+(crontab -l 2>/dev/null; echo "@reboot sleep 60 && /path/to/polar-flow-export/monthly-export.sh") | crontab -
+```
+
+Replace `/path/to/polar-flow-export` with the absolute path to this repo.
+
+To verify it is registered:
+
+```bash
+crontab -l
+```
+
+Logs are written to `cron.log` in the repo directory.
+
+

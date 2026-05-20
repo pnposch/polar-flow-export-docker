@@ -216,8 +216,10 @@ def main():
 
             exercise_ids = get_exercise_ids(driver, year, month)
             if not exercise_ids:
-                # Empty month — mark as complete so we don't revisit
-                save_completed_month(output_dir, ym, completed)
+                # Empty month — mark as complete so we don't revisit.
+                # Never mark the current month complete: new exercises may still appear.
+                if ym != today_ym:
+                    save_completed_month(output_dir, ym, completed)
                 continue
             # Refresh cookies from the driver before each batch of downloads
             session = requests.Session()

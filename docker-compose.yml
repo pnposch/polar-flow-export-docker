@@ -22,8 +22,10 @@ services:
         - POLAR_USER=${POLAR_USER}
         - POLAR_PASS=${POLAR_PASS}
       volumes:
-        - ../polar_data/:/data:z
-        - ./polar-export.py:/app/polar-export.py:z
+        - ${ACTIVITY_DIR:-./activities}:/data:z
+        - ./polar-export.py:/app/polar-export.py:ro,z
       depends_on:
         selenium:
           condition: service_healthy
+  
+        

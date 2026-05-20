@@ -1,77 +1,54 @@
 # Copilot Instructions
 
-## Overview
+This repository is a small Dockerized Python tool that exports Polar Flow workouts as TCX files. The implementation is intentionally concentrated in `polar-export.py`; most useful Copilot help here comes from understanding the runtime flow and the persistence files in the output directory.
 
-This is a Dockerized tool that exports training sessions from [Polar Flow](https://flow.polar.com) as TCX files. It uses Selenium (remote Chrome) to log in via SSO and scrape exercise IDs from the monthly diary view, then downloads each session via the Polar export API using transferred session cookies.
-
-## Architecture
-
-- **`polar-export.py`** — single-file Python script; all export logic lives here
-- **`docker-compose.yml`** — two services: `selenium` (standalone Chrome) and `app` (export runner, container name `export`)
-- **`bulk.sh`** — single `docker exec` call with `--start` / `--end` flags covering the full date range
-- **`.env`** — credentials loaded into the `app` container at runtime (see `.env.example`)
-- Output TCX files and `ids.txt` are written to the host volume mapped to `/data` inside the container
-
-### Key flow
-
-1. `validate_env()` checks all required env vars before touching Selenium
-2. `build_driver()` connects to the remote Chrome service
-3. `login()` handles SSO; a 5 s sleep follows to let the redirect settle
-4. For each month in the requested range, `get_exercise_ids()` scrapes exercise IDs via Selenium
-5. Before downloading each month's batch, cookies are refreshed from the live WebDriver into a `requests.Session` — this ensures the download session stays fresh across a long multi-month run
-6. `download_exercises()` skips IDs already in `ids.txt` (idempotent reruns) and catches per-exercise errors without aborting the whole run
-7. `save_ids()` persists the updated ID set after each month
-
-## Running the tool
+## Build, test, and lint commands
 
 ```bash
-# Start services
+# Start the Selenium + app containers used by the normal workflow
 docker compose up -d
 
-# Export current month
-docker exec -it export python3 polar-export.py
+# Export the current month from the running app container
+docker exec export python3 polar-export.py
 
-# Export a specific month (legacy positional args)
-docker exec -it export python3 polar-export.py <month> <year>
+# Export a specific range
+docker exec export python3 polar-export.py --start 2025-01 --end 2026-03
 
-# Export a date range
-docker exec -it export python3 polar-export.py --start 2025-01 --end 2026-03
+# Legacy single-month invocation still supported
+docker exec export python3 polar-export.py 3 2026
 
-# Bulk export (edit start_month in bulk.sh first, then:)
+# Bulk export from POLAR_START (or the default in bulk.sh) through the current month
 ./bulk.sh
-```
 
-## Environment variables (required)
+# Local dependency setup for non-Docker development
+uv sync
 
-| Variable        | Purpose                          |
-|-----------------|----------------------------------|
-| `POLAR_USER`    | Polar Flow username or email     |
-| `POLAR_PASS`    | Polar Flow password              |
-| `SELENIUM_HOST` | Hostname of the Selenium service |
-| `SELENIUM_PORT` | Port of the Selenium service     |
-
-Set `POLAR_USER` and `POLAR_PASS` in `.env` (see `.env.example`); the others are set by `docker-compose.yml`.
-
-## Key conventions
-
-- **ID deduplication**: `ids.txt` in the output dir is a persistent sorted set of downloaded exercise IDs. It is read once at startup and written after each month's batch. New IDs are union-merged; existing ones are skipped.
-- **Cookie refresh per month**: a new `requests.Session` is built from `driver.get_cookies()` before each month's downloads to handle long-running sessions.
-- **Output path**: defaults to `/data` inside the container — change the volume mount in `docker-compose.yml` to redirect output, or pass `--output-dir`.
-- **Selenium wait**: `WebDriverWait` (10 s timeout) is used after diary navigation. Months with no exercises raise `TimeoutException`, which is caught and treated as an empty month.
-- **Container name**: the `app` service is named `export` — `bulk.sh` and manual `docker exec` commands rely on this name.
-- **Legacy positional args**: `polar-export.py <month> <year>` still works for single-month invocations.
-
-## Dependency management
-
-Dependencies are declared in both `pyproject.toml` (for `uv`) and `requirements.txt` (used by the Dockerfile). After any dependency change, regenerate `requirements.txt`:
-
-```bash
+# Regenerate Docker requirements after dependency changes
 uv export -o requirements.txt --no-hashes
 ```
 
-Local dev:
+There is currently **no repository-defined automated test suite or lint command**. Do not invent `pytest`, `ruff`, or similar targets in instructions unless the repo adds them later, so there is also no single-test command today.
 
-```bash
-uv sync
-uv run python polar-export.py --start 2026-01 --end 2026-03
-```
+## High-level architecture
+
+- **`docker-compose.yml`** defines the real runtime topology: a remote `selenium/standalone-chrome` service plus an `app` container named **`export`**. Most documented commands assume that container name.
+- **`polar-export.py`** owns the entire export pipeline:
+  1. `validate_env()` fails fast if Polar or Selenium env vars are missing.
+  2. `build_driver()` connects to the remote Selenium service rather than starting a local browser.
+  3. `login()` performs Polar SSO in Selenium and waits until the redirect leaves the `flowSso` domain.
+  4. `get_exercise_ids()` visits each monthly diary page and scrapes workout links from the calendar view.
+  5. For each month, the script copies live Selenium cookies into a fresh `requests.Session`, mirrors browser headers, and downloads TCX files from the Polar export API.
+  6. Download state is persisted in the output directory so reruns can skip work.
+- **`bulk.sh`** is not a separate implementation path; it just wraps one long `docker exec export python3 polar-export.py --start ... --end ...` run so Selenium login and cookie state are reused across the whole date range.
+- The host directory mounted to **`/data`** is part of the app's state model, not just an output folder: TCX files, `ids.txt`, and `completed_months.txt` all live there.
+
+## Key conventions
+
+- **Single-file core logic:** keep workflow changes in `polar-export.py` unless there is a strong reason to split it. Architecture, CLI parsing, Selenium scraping, and download behavior currently live together.
+- **Persistent skip state lives in output files:** `ids.txt` is the sorted set of already-downloaded exercise IDs, and `completed_months.txt` tracks months that finished successfully. Changes to rerun behavior usually need both files considered together.
+- **Current month is special:** completed-month skipping does **not** apply to the current month, because new workouts can still appear there.
+- **Month completion is conservative:** empty months are marked complete immediately, but months with any download failure are **not** marked complete, so future runs retry them.
+- **Cookie refresh happens per month:** the `requests.Session` is rebuilt from `driver.get_cookies()` before each monthly batch. Preserve that pattern for long-running exports instead of reusing one stale session for the entire run.
+- **Date handling is month-based:** CLI dates are `YYYY-MM`, internally normalized to the first day of the month, and `--end` is capped to the current month.
+- **Docker and local dependency metadata both matter:** dependencies are declared in `pyproject.toml` for `uv`, but the Docker image installs from `requirements.txt`, so dependency updates are incomplete unless both stay in sync.
+- **Runtime prerequisites come from env + compose:** `POLAR_USER` and `POLAR_PASS` belong in `.env`; `SELENIUM_HOST` and `SELENIUM_PORT` are injected by Compose. Copilot should preserve that split instead of hardcoding values in scripts.
